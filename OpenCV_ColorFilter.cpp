@@ -9,8 +9,9 @@ using namespace cv;
 
 //SVD::compute(A, S, U, Vt);
 
-
-
+#define MatPair Vec<Mat_<float>,2>
+#define ColorFilterParams Vec<Vec3f, 3>
+#define CFpar ColorFilterParams
 
 Vec3f myDefV(const Mat& im)
 {
@@ -90,35 +91,6 @@ Mat img2hist(Mat img)
     return res;
 }
 
-Mat img2hist_old(Mat img)
-{
-    vector<Mat> bgr_planes;
-    split(img, bgr_planes);
-
-
-    float range[] = { 0, 256 }; //the upper boundary is exclusive
-    const float* histRange[] = { range };
-    bool uniform = true, accumulate = false;
-
-    Mat b_hist, g_hist, r_hist;
-
-    calcHist(&bgr_planes[0], 1, 0, Mat(), b_hist, 1, &histSize, histRange, uniform, accumulate);
-    calcHist(&bgr_planes[1], 1, 0, Mat(), g_hist, 1, &histSize, histRange, uniform, accumulate);
-    calcHist(&bgr_planes[2], 1, 0, Mat(), r_hist, 1, &histSize, histRange, uniform, accumulate);
-
-
-
-    normalize(b_hist, b_hist, 0, hist_h, NORM_MINMAX, -1, Mat());
-    normalize(g_hist, g_hist, 0, hist_h, NORM_MINMAX, -1, Mat());
-    normalize(r_hist, r_hist, 0, hist_h, NORM_MINMAX, -1, Mat());
-
-    vector<Mat> rgb_hist = { b_hist, g_hist, r_hist };
-
-    Mat res;
-    merge(rgb_hist, res);
-    return res;
-}
-
 Mat hist2mat(Mat rgb_hist)
 {
     vector<Mat> rgb_planes;
@@ -157,25 +129,32 @@ Mat hist2mat(Mat rgb_hist)
     return histImage;
 }
 
-
-
-Mat boundCylinder(const Mat& im, Vec3f v, Scalar p0)
+MatPair getTRmass(const Mat& im, Vec3f v, Scalar p0)
 {
     cout <<"p0 = "<< p0 << endl;
-    
-    Mat dMat = im - p0;
-    //cout << dMat << endl;
+    Mat dMat;
+    im.convertTo(dMat, CV_32FC3);
+    dMat = dMat - p0;
     Mat Tmass;
+    Mat Rmass;
     for (int y = 0; y < im.rows; y++)
         for (int x = 0; x < im.cols; x++)
         {
-            const Vec3b di = dMat.at<uchar>(y, x);
+            const Vec3f di = dMat.at<Vec3f>(y, x);
             float ti = di.dot(v)/ norm(v);  
             Tmass.push_back(ti);
+            float R = sqrt(norm(di) * norm(di) - norm(ti * v) * norm(ti * v));
+            Rmass.push_back(R);
         }
     Mat sT;
     cv::sort(Tmass, sT, SORT_EVERY_COLUMN + SORT_ASCENDING);
-    return sT;
+    sT += 255;
+    sT = sT.mul(0.5);
+
+    Mat sR;
+    cv::sort(Rmass, sR, SORT_EVERY_COLUMN + SORT_ASCENDING);
+    
+    return MatPair(sT, sR);
 }
 
 bool myCompareMat(const Mat& m1, const Mat& m2)
@@ -188,22 +167,100 @@ bool myCompareMat(const Mat& m1, const Mat& m2)
     return maxEl == 0;
 }
 
+Vec2f getTparam(Mat sT) 
+{
+    float alpha = 0.05;
+    float curSumT(0), sumT(sum(sT)[0]), curPercent(0);
+    int indT1(-1), indT2(-1);
+    float t1(0), t2(0);
+    for (int i = 0; i < sT.rows; i++)
+    {
+        curSumT += sT.at<float>(i);
+        curPercent = curSumT / sumT;
+        if (indT1 == -1 && curPercent >= alpha)
+            indT1 = i;
+        if (indT2 == -1 && curPercent >= (1 - alpha))
+            indT2 = i;
+    }
+    t1 = indT1 == -1 ? 0 : sT.at<float>(indT1);
+    t2 = indT2 == -1 ? 0 : sT.at<float>(indT2);
+    return Vec2f(t1, t2);
+}
+
+
+//  Mat getTrainImage(Size s, Vec3b color, Vec3b gradient, float alpha)
+//  {
+//      Mat im(s, CV_8U);
+//      for (int y = 0; y < s.height; y++)
+//          for (int x = 0; x < s.width; x++)
+//          {
+//  
+//          }
+//  
+//  }
+
+Mat applyFilter(const Mat& im, CFpar filt, Vec3b background = Vec3b(255,255,255))
+{
+    Vec3f p0 = filt[0];
+    Vec3f v = filt[1];
+    float t1 = filt[2][0];
+    float t2 = filt[2][1];
+    float R = filt[2][2];
+
+    Mat res(im.size(), im.depth());
+
+    for(int y=0;y<im.rows;y++)
+        for (int x = 0; x < im.cols; x++)
+        {
+            Vec3f p = im.at<Vec3f>(y, x);
+            Vec3f di = p - p0;
+            float ti = di.dot(v) / norm(v);
+            float ri = sqrt(norm(di) * norm(di) - norm(ti * v) * norm(ti * v));
+
+            if (t1 < ti && ti < t2
+                && ri < R)
+                res.at<Vec3b>(y, x) = im.at<Vec3b>(y, x);
+            else 
+            {
+                res.at<Vec3b>(y, x) = background;
+            }
+        }
+    return res;
+}
+
 int main()
 {
-	Mat im(Size(300, 500), CV_8UC3, Scalar(200,50,40));
-    im(Rect(20, 20, 200, 300)) = Scalar(100, 150, 0);
-    imshow("im", im);
+//  	Mat im(Size(30, 30), CV_8UC3, Scalar(0,100,0));
+//      im(Rect(10, 10, 15, 15)) = Scalar(0,200,0);
+//      imshow("im", im);
+
+    Mat trainImage = imread(".. / .. / .. / img/redgrad.png", IMREAD_UNCHANGED);
+    imshow("train image", trainImage);
+
+    Mat realImage = imread(".. / .. / .. / img/redcar1.jpg", IMREAD_UNCHANGED);
+    imshow("real image", realImage);
+
     
-    //cout << im << endl;
-    Scalar p0 = mean(im);
-    Vec3f v = myDefV(im);
-    Mat sT = boundCylinder(im,v,p0);
-    //cout << sT << endl;
-    Mat hist = img2hist(sT);
+    Scalar tmp = mean(trainImage);
+    Vec3f p0(tmp[0],tmp[1],tmp[2]);
+    Vec3f v = myDefV(trainImage);
 
 
-    imshow("hist_new", hist2mat(hist));
-    waitKey();
+    MatPair TRmass = getTRmass(trainImage, v, p0);
+    
+    Vec2f Tparams = getTparam(TRmass[0]);
+    Vec2f Rparams = getTparam(TRmass[1]);
+    
+    float t1 = Tparams[0];
+    float t2 = Tparams[1];
+    float R = Rparams[1];
+    
+    CFpar filt = CFpar(p0, v, Vec3f(t1, t2, R));
+
+
+    cout<< "p0 = " << p0 << endl<<"v = " << v << endl;
+    cout <<"t1 = " << t1 <<"  t2 = " << t2 << endl;
+    cout << "R = " << R  << endl;
 	system("pause");
 	return 0;
 }
