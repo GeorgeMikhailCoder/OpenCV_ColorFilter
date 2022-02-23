@@ -309,7 +309,6 @@ int main()
       imshow("mask", trainImage);
       imshow("filtered image", filteredImage);
       waitKey();
-
 	system("pause");
 	return 0;
 }
