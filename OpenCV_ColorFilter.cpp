@@ -61,12 +61,17 @@ Vec3f myDefV(const Mat& im)
 
     float porog = 0.01;
     int ind = S.at<float>(2) > porog ? 2 : S.at<float>(1) > porog ? 1 : S.at<float>(0) > porog ?0 : -1;
-    cout << S << endl;
-    cout << Vt << endl;
-    Vec3f v = Vt(Range(ind,ind+1),Range::all());
+    //  cout <<"S = "<< S << endl;
+    //  cout << "Vt = "<<Vt << endl;
+    //  cout << "V = " << Vt.t() << endl;
+    Mat V = Vt.t();
+    Vec3f v = V(Range(ind,ind+1),Range::all());
     
     v = v / norm(v);
-    
+    //  cout << v << endl;
+    //  cout << "Dsum: " << Dsum<< endl;
+    //  cout <<"Proof: " << U * Mat::diag(S) * Vt << endl;
+    //  cout << "v = " << v << endl;
     return v;
 }
 
@@ -153,6 +158,7 @@ MatPair getTRmass(const Mat& im, Vec3f v, Vec3f p0)
     Mat dMat;
     im.convertTo(dMat, CV_32FC3);
     dMat = dMat - Scalar(p0);
+
     Mat Tmass;
     Mat Rmass;
     for (int y = 0; y < im.rows; y++)
@@ -166,7 +172,7 @@ MatPair getTRmass(const Mat& im, Vec3f v, Vec3f p0)
         }
     Mat sT;
     cv::sort(Tmass, sT, SORT_EVERY_COLUMN + SORT_ASCENDING);
-    sT += 255;
+    sT += 1;
     sT = sT.mul(0.5);
 
     Mat sR;
@@ -185,10 +191,13 @@ bool myCompareMat(const Mat& m1, const Mat& m2)
     return maxEl == 0;
 }
 
-Vec2f getTparam(Mat sT) 
+Vec2f getTparam(Mat sT, float alpha=0.01) 
 {
-    float alpha = 0.01;
     float curSumT(0), sumT(sum(sT)[0]), curPercent(0);
+
+    float minS = sT.at<float>(0, 0);
+    float maxS = sT.at<float>(sT.rows-1, 0);
+
     int indT1(-1), indT2(-1);
     float t1(0), t2(0);
     for (int i = 0; i < sT.rows; i++)
@@ -222,19 +231,40 @@ Mat applyFilter(const Mat& src, CFpar filt, Vec3b background = Vec3b(255,255,255
     for(int y=0;y<im.rows;y++)
         for (int x = 0; x < im.cols; x++)
         {
-            res.at<Vec3b>(y, x);
+            res.at<Vec3f>(y, x);
             Vec3f di = im.at<Vec3f>(y, x);
             float ti = di.dot(v) / norm(v);
             float ri = sqrt(norm(di) * norm(di) - norm(ti * v) * norm(ti * v));
 
             if (t1 < ti && ti < t2
                 && ri < R)
-                res.at<Vec3b>(y, x) = src.at<Vec3b>(y, x);
+                res.at<Vec3f>(y, x) = src.at<Vec3f>(y, x);
             else 
             {
-                res.at<Vec3b>(y, x) = background;
+                res.at<Vec3f>(y, x) = background;
             }
         }
+    return res;
+}
+
+Mat readImage(string name)
+{
+    Mat im11 = imread("../../../img/" + name, IMREAD_COLOR);
+    if (im11.empty())
+    {
+        cout << "Can't read image" << endl;
+        char c;
+        cin >> c;
+        exit(0);
+    }
+    return im11;
+}
+
+Mat toFloat(const Mat& src)
+{
+    Mat res;
+    src.convertTo(res, CV_32FC3);
+    res /= 255;
     return res;
 }
 
@@ -244,50 +274,41 @@ int main()
 //      im(Rect(10, 10, 15, 15)) = Scalar(0,200,0);
 //      imshow("im", im);
 
-    Mat trainImage = imread("../../../img/redtemplate1.jpg", IMREAD_COLOR);
-    if (trainImage.empty()) {
-        cout << "Error: can not load train image" << endl;
-        char a;
-        cin >> a;
-        exit(0);
-    }
-    imshow("train image", trainImage);
+    Mat trainImage = readImage("redtemplate3.jpg");
+    Mat realImage  = readImage("redcar1.jpg");
+    trainImage = toFloat(trainImage);
+    realImage = toFloat(realImage);
 
-    Mat realImage = imread("../../../img/redcar1.jpg", IMREAD_COLOR);
-    if (realImage.empty()) {
-        cout << "Error: can not load real image" << endl;
-        char a;
-        cin >> a;
-        exit(0);
-    }
-    imshow("real image", realImage);
-    
+
     Scalar tmp = mean(trainImage);
     Vec3f p0(tmp[0],tmp[1],tmp[2]);
     Vec3f v = myDefV(trainImage);
 
 
-    MatPair TRmass = getTRmass(trainImage, v, p0);
-    
-    imshow("histT", hist2mat(img2hist(TRmass[0])));
-    imshow("histR", hist2mat(img2hist(TRmass[1])));
+      MatPair TRmass = getTRmass(trainImage, v, p0);
+      
+      //  imshow("histT", hist2mat(img2hist(TRmass[0])));
+      //  imshow("histR", hist2mat(img2hist(TRmass[1])));
+  
+      Vec2f Tparams = getTparam(TRmass[0],0.001);
+      Vec2f Rparams = getTparam(TRmass[1],0.5);
+      
+      float t1 = Tparams[0];
+      float t2 = Tparams[1];
+      float R = Rparams[1];
+  
+      cout << "p0 = " << p0 << endl << "v = " << v << endl;
+      cout << "t1 = " << t1 << "  t2 = " << t2 << endl;
+      cout << "R = " << R << endl;
+  
+      CFpar filt = CFpar(p0, v,t1, t2, R);
+      Mat filteredImage = applyFilter(realImage.clone(), filt, Vec3b(0,0,0));
+  
 
-    Vec2f Tparams = getTparam(TRmass[0]);
-    Vec2f Rparams = getTparam(TRmass[1]);
-    
-    float t1 = Tparams[0];
-    float t2 = Tparams[1];
-    float R = Rparams[1];
-
-    cout << "p0 = " << p0 << endl << "v = " << v << endl;
-    cout << "t1 = " << t1 << "  t2 = " << t2 << endl;
-    cout << "R = " << R << endl;
-
-    CFpar filt = CFpar(p0, v,t1, t2, R);
-    Mat filteredImage = applyFilter(realImage, filt);
-
-    imshow("filtered image", filteredImage);
-    waitKey();
+      imshow("origin image", realImage);
+      imshow("mask", trainImage);
+      imshow("filtered image", filteredImage);
+      waitKey();
 
 	system("pause");
 	return 0;
