@@ -30,7 +30,7 @@ struct ColorFilterParams
     }
 };
 
-Vec3f myDefV(const Mat& im)
+Vec3f myDefV(const Mat& im,Vec3f p0)
 {
     Matx33f Dsum = Matx33f::zeros();
 
@@ -40,7 +40,8 @@ Vec3f myDefV(const Mat& im)
 
         for (int j = 0; j < im.cols; j++)
         {
-            Vec3b di = row[j];
+            Vec3b pi = row[i];
+            Vec3f di = (Vec3f)pi - p0;
             Matx33f D = di * di.t();
 
             Dsum += D;
@@ -282,7 +283,7 @@ int main()
 
     Scalar tmp = mean(trainImage);
     Vec3f p0(tmp[0],tmp[1],tmp[2]);
-    Vec3f v = myDefV(trainImage);
+    Vec3f v = myDefV(trainImage, p0);
 
 
       MatPair TRmass = getTRmass(trainImage, v, p0);
